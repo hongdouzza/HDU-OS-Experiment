@@ -6,18 +6,18 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("User");
-MODULE_DESCRIPTION("A simple reboot module");
+MODULE_DESCRIPTION("A simple douzza_reboot module");
 
 static int reboot_delay = 10;
 module_param(reboot_delay, int, 0);
-MODULE_PARM_DESC(reboot_delay, "Delay in seconds before reboot (must be > 0)");
+MODULE_PARM_DESC(reboot_delay, "Delay in seconds before douzza_reboot (must be > 0)");
 
 static struct timer_list my_timer;
 static int countdown;
 
 static void my_timer_function(struct timer_list *t)
 {
-    printk(KERN_INFO "Reboot module: Timer expired, attempting to reboot...\n");
+    printk(KERN_INFO "Reboot module: Timer expired, attempting to douzza_reboot...\n");
     
     emergency_restart();
     
