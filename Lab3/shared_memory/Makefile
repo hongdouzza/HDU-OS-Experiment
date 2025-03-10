@@ -1,10 +1,17 @@
-all: writer reader
+CC = gcc
+CFLAGS = -Wall -Wextra -pedantic -std=gnu11 -O2
+LDFLAGS =
+TARGETS = writer reader
+
+.PHONY: all clean
+
+all: $(TARGETS)
 
 writer: writer.c
-	gcc $^ -o $@
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 reader: reader.c
-	gcc $^ -o $@
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 clean:
-	rm -f writer reader
+	rm -f $(TARGETS) *.o
