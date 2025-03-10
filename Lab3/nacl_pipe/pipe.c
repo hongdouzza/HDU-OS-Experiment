@@ -21,6 +21,7 @@ int main() {
         return 1;
     }
 
+    printf("fd[0]: %d, fd[1]: %d\n", fd[0], fd[1]);
     // 创建子进程
     pid = fork();
 
@@ -35,16 +36,13 @@ int main() {
 
         while (1) {
             if (fgets(write_msg, BUFFER_SIZE, stdin) == NULL) {
-                break; // 检测到输入端关闭
+                break; //  
             }
             write_msg[strcspn(write_msg, "\n")] = '\0'; // 去掉换行符
 
             // 写入消息到管道
             write(fd[WRITE_END], write_msg, strlen(write_msg) + 1);
 
-            if (strcmp(write_msg, "exit") == 0) {
-                break;
-            }
         }
 
         // 关闭写入端
@@ -57,10 +55,6 @@ int main() {
             ssize_t bytes_read = read(fd[READ_END], read_msg, BUFFER_SIZE);
             if (bytes_read == 0) {
                 break; // 检测到写入端关闭
-            }
-
-            if (strcmp(read_msg, "exit") == 0) {
-                break;
             }
 
             printf("Child read: %s\n", read_msg);
