@@ -2,25 +2,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <mqueue.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <errno.h>
 
-#define QUEUE_NAME "/msg_queue"
+#define KEY 1234
 #define MAX_MSG_SIZE 1024
 #define BUFFER_SIZE 256
 
+// 定义消息结构体
+struct msg_buffer {
+    long msg_type;
+    char msg_text[MAX_MSG_SIZE];
+};
+
 int main() {
-    mqd_t mq;
-    struct mq_attr attr;
+    int msgid;
+    struct msg_buffer message;
     char buffer[BUFFER_SIZE];
-    
-    // 设置消息队列属性
-    attr.mq_flags = 0;
-    attr.mq_maxmsg = 10;
-    attr.mq_msgsize = MAX_MSG_SIZE;
-    attr.mq_curmsgs = 0;
     
     pid_t pid;
     pid = fork();
@@ -29,11 +31,11 @@ int main() {
         fprintf(stderr, "Fork failed");
         return 1;
     } else if (pid > 0) { // 父进程：发送消息
-        mq_unlink(QUEUE_NAME); // 删除可能已存在的消息队列
-        mq = mq_open(QUEUE_NAME, O_CREAT | O_WRONLY, 0666, &attr); // 创建消息队列
-        printf("mq: %d\n", mq);
-        if (mq == (mqd_t)-1) {
-            perror("mq_open (parent)");
+        // 创建消息队列
+        msgid = msgget(KEY, 0666 | IPC_CREAT);
+        printf("msgid: %d\n", msgid);
+        if (msgid == -1) {
+            perror("msgget (parent)");
             exit(1);
         }
         
@@ -48,9 +50,13 @@ int main() {
             // 去掉末尾的换行符
             buffer[strcspn(buffer, "\n")] = '\0';
             
+            // 准备消息
+            message.msg_type = 1;
+            strcpy(message.msg_text, buffer);
+            
             // 发送消息
-            if (mq_send(mq, buffer, strlen(buffer) + 1, 0) == -1) {
-                perror("mq_send");
+            if (msgsnd(msgid, &message, strlen(message.msg_text) + 1, 0) == -1) {
+                perror("msgsnd");
                 break;
             }
         }
@@ -58,9 +64,10 @@ int main() {
         // 等待子进程结束
         sleep(1);  // 给子进程一点时间接收最后的消息
         
-        // 关闭并删除消息队列
-        mq_close(mq);
-        mq_unlink(QUEUE_NAME);
+        // 删除消息队列
+        if (msgctl(msgid, IPC_RMID, NULL) == -1) {
+            perror("msgctl");
+        }
         
         // 等待子进程结束
         printf("父进程: 已结束\n");
@@ -69,36 +76,34 @@ int main() {
         sleep(1);
         
         // 打开消息队列
-        mq = mq_open(QUEUE_NAME, O_RDONLY);
-        printf("mq: %d\n", mq);
-        if (mq == (mqd_t)-1) {
-            perror("mq_open (child)");
+        msgid = msgget(KEY, 0666);
+        printf("msgid: %d\n", msgid);
+        if (msgid == -1) {
+            perror("msgget (child)");
             exit(1);
         }
         
         printf("子进程: 已连接到消息队列，等待接收消息...\n");
         
         while (1) {
-            ssize_t bytes_read;
-            
             // 接收消息
-            bytes_read = mq_receive(mq, buffer, MAX_MSG_SIZE, NULL);
+            ssize_t bytes_read = msgrcv(msgid, &message, MAX_MSG_SIZE, 1, IPC_NOWAIT);
             if (bytes_read == -1) {
-                if (errno == EAGAIN || errno == EINTR) {
-                    continue;  // 临时错误，重试
-                } else if (errno == EINVAL) {
-                    // 消息队列可能已被删除
+                if (errno == ENOMSG) {
+                    // 没有消息可接收，等待一会再尝试
+                    usleep(100000);  // 等待100ms
+                    continue;
+                } else if (errno == EIDRM) {
+                    // 消息队列已被删除
                     break;
                 }
-                perror("mq_receive");
+                perror("msgrcv");
                 break;
             }
             
-            printf("子进程接收: %s\n", buffer);
+            printf("子进程接收: %s\n", message.msg_text);
         }
         
-        // 关闭消息队列
-        mq_close(mq);
         printf("子进程: 已结束\n");
     }
     
