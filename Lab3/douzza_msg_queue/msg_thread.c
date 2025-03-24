@@ -1,72 +1,85 @@
-#include <fcntl.h>
-#include <mqueue.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define QUEUE_NAME "/thread_queue"
+#include <pthread.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
 
-// 在全局区域定义队列属性
-struct mq_attr attr = {
-    .mq_flags = 0,    // 阻塞模式
-    .mq_maxmsg = 10,          // 队列最大消息数
-    .mq_msgsize = 1024,       // 每条消息最大长度
-    .mq_curmsgs = 0
+#define KEY_PATH "/tmp"
+#define PROJ_ID 'M'
+#define MSG_SIZE 1024
+
+// Message structure for System V message queue
+struct msg_buffer {
+    long mtype;       // Message type (must be > 0)
+    char mtext[MSG_SIZE]; // Message data
 };
 
 void* sender(void* arg) {
-    mqd_t mq = mq_open(QUEUE_NAME, O_WRONLY | O_CREAT, 0666, &attr); // 指定属性
-
-    if (mq == (mqd_t)-1) {
-        perror("Sender: mq_open failed");
+    key_t key = ftok(KEY_PATH, PROJ_ID);//ftok函数用于生成一个key值，key值是一个整数，用于标识一个IPC对象
+    if (key == -1) {
+        perror("Sender: ftok failed");
         exit(1);
     }
 
-    char msg[] = "Hello from sender thread!";
-    if (mq_send(mq, msg, strlen(msg)+1, 0) == -1) { // +1包含空终止符
-        perror("Sender: mq_send failed");
+    int msgid = msgget(key, 0666 | IPC_CREAT);//msgget函数用于创建一个消息队列，如果消息队列已经存在，则返回该消息队列的标识符
+    if (msgid == -1) {
+        perror("Sender: msgget failed");
+        exit(1);
     }
-    mq_close(mq);
-    return NULL;  // 修复缺少分号
+
+    struct msg_buffer message;
+    message.mtype = 1; // Message type
+    strcpy(message.mtext, "Hello from sender thread!");
+
+    if (msgsnd(msgid, &message, strlen(message.mtext) + 1, 0) == -1) {
+        perror("Sender: msgsnd failed");
+    }
+
+    return NULL;
 }
 
-
 void* receiver(void* arg) {
-    mqd_t mq = mq_open(QUEUE_NAME, O_RDONLY | O_CREAT, 0666, &attr); // 确保队列存在
-    if (mq == (mqd_t)-1) {
-        perror("Receiver: mq_open failed");
+    key_t key = ftok(KEY_PATH, PROJ_ID);
+    if (key == -1) {
+        perror("Receiver: ftok failed");
         exit(1);
     }
 
-    char buf[1024]; // 缓冲区足够大
-    ssize_t bytes_read = mq_receive(mq, buf, sizeof(buf), NULL);
-    if (bytes_read == -1) {
-        perror("Receiver: mq_receive failed");
-    } else {
-        buf[bytes_read] = '\0'; // 确保字符串终止
-        printf("Received: %s\n", buf);
+    int msgid = msgget(key, 0666);
+    if (msgid == -1) {
+        perror("Receiver: msgget failed");
+        exit(1);
     }
 
-    mq_close(mq);
-    mq_unlink(QUEUE_NAME); // 删除队列（更安全的位置）
+    struct msg_buffer message;
+
+    // Receive message of type 1
+    if (msgrcv(msgid, &message, MSG_SIZE, 1, 0) == -1) {
+        perror("Receiver: msgrcv failed");
+    } else {
+        printf("Received: %s\n", message.mtext);
+    }
+
+    // Remove the message queue
+    if (msgctl(msgid, IPC_RMID, NULL) == -1) {
+        perror("Receiver: msgctl failed");
+    }
+
     return NULL;
 }
 
 int main() {
-    // 提前创建并立即关闭队列以确保属性生效
-    mqd_t pre_mq = mq_open(QUEUE_NAME, O_RDONLY | O_CREAT, 0666, &attr);
-    if (pre_mq == (mqd_t)-1) {
-        perror("Main: mq_open failed");
-        exit(1);
-    }
-    mq_close(pre_mq);
-
     pthread_t t1, t2;
+
     pthread_create(&t1, NULL, sender, NULL);
-    sleep(1); // 简单同步，防止接收方先运行
+    sleep(1); // Simple synchronization to ensure sender runs first
     pthread_create(&t2, NULL, receiver, NULL);
 
     pthread_join(t1, NULL);
     pthread_join(t2, NULL);
+
     return 0;
 }

@@ -1,11 +1,16 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -pedantic -std=gnu11
-LDFLAGS = -lrt -lpthread
+CFLAGS = -Wall -g
+LDFLAGS = -pthread
 
-all: msg_thread
+TARGET = msg_thread
+SRC = msg_thread.c
 
-msg_thread: msg_thread.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+all: $(TARGET)
+
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
-	rm -f msg_thread
+	rm -f $(TARGET)
+
+.PHONY: all clean
