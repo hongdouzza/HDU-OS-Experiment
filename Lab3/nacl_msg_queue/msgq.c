@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <sys/syscall.h>  // 添加syscall支持
 
 #define KEY 1234
 #define MAX_MSG_SIZE 1024
@@ -18,6 +19,12 @@ struct msg_buffer {
     long msg_type;
     char msg_text[MAX_MSG_SIZE];
 };
+
+// 系统调用号定义
+#define SYS_msgget  68
+#define SYS_msgsnd  69
+#define SYS_msgrcv  70
+#define SYS_msgctl  71
 
 int main() {
     int msgid;
@@ -31,8 +38,8 @@ int main() {
         fprintf(stderr, "Fork failed");
         return 1;
     } else if (pid > 0) { // 父进程：发送消息
-        // 创建消息队列
-        msgid = msgget(KEY, 0666 | IPC_CREAT);
+        // 创建消息队列，使用syscall直接调用
+        msgid = syscall(SYS_msgget, KEY, 0666 | IPC_CREAT);
         printf("msgid: %d\n", msgid);
         if (msgid == -1) {
             perror("msgget (parent)");
@@ -54,8 +61,8 @@ int main() {
             message.msg_type = 1;
             strcpy(message.msg_text, buffer);
             
-            // 发送消息
-            if (msgsnd(msgid, &message, strlen(message.msg_text) + 1, 0) == -1) {
+            // 发送消息，使用syscall直接调用
+            if (syscall(SYS_msgsnd, msgid, &message, strlen(message.msg_text) + 1, 0) == -1) {
                 perror("msgsnd");
                 break;
             }
@@ -64,8 +71,8 @@ int main() {
         // 等待子进程结束
         sleep(1);  // 给子进程一点时间接收最后的消息
         
-        // 删除消息队列
-        if (msgctl(msgid, IPC_RMID, NULL) == -1) {
+        // 删除消息队列，使用syscall直接调用
+        if (syscall(SYS_msgctl, msgid, IPC_RMID, NULL) == -1) {
             perror("msgctl");
         }
         
@@ -75,8 +82,8 @@ int main() {
         // 等待父进程创建消息队列
         sleep(1);
         
-        // 打开消息队列
-        msgid = msgget(KEY, 0666);
+        // 打开消息队列，使用syscall直接调用
+        msgid = syscall(SYS_msgget, KEY, 0666);
         printf("msgid: %d\n", msgid);
         if (msgid == -1) {
             perror("msgget (child)");
@@ -86,8 +93,8 @@ int main() {
         printf("子进程: 已连接到消息队列，等待接收消息...\n");
         
         while (1) {
-            // 接收消息
-            ssize_t bytes_read = msgrcv(msgid, &message, MAX_MSG_SIZE, 1, IPC_NOWAIT);
+            // 接收消息，使用syscall直接调用
+            ssize_t bytes_read = syscall(SYS_msgrcv, msgid, &message, MAX_MSG_SIZE, 1, IPC_NOWAIT);
             if (bytes_read == -1) {
                 if (errno == ENOMSG) {
                     // 没有消息可接收，等待一会再尝试
