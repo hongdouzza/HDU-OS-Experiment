@@ -241,7 +241,7 @@ int my_rmdir(const char* dirname) {
     // 确保是目录
     if (!entry.attr.is_dir) {
         printf("%s 不是目录！\n", dirname);
-        return -1;不是目录！
+        return -1;
     }
 
     // 检查目录是否为空
@@ -254,7 +254,7 @@ int my_rmdir(const char* dirname) {
     }
 
     // 释放目录占用的块
-    free_block(entry.first_block);不是目录！
+    free_block(entry.first_block);
 
     // 从当前目录中删除条目
     DirEntry* current_dir_entries = (DirEntry*)(virtual_disk + current_dir_block * BLOCK_SIZE);
