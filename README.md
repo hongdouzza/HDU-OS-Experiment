@@ -50,6 +50,7 @@ make
 ## 👥 贡献者
 - douzza
 - Ec3o
+- NaCl
 
 ## 📄 许可证
 本项目采用GPL许可证
