@@ -120,6 +120,24 @@ void my_format() {
     // 初始化根目录
     DirEntry* root_dir = (DirEntry*)(virtual_disk + ROOT_BLOCK * BLOCK_SIZE);
     memset(root_dir, 0, BLOCK_SIZE);
+    
+    // 添加 "." 条目 (根目录指向自身)
+    strcpy(root_dir[0].filename, ".");
+    root_dir[0].attr.is_dir = 1;
+    root_dir[0].attr.read = 1;
+    root_dir[0].attr.write = 1;
+    root_dir[0].first_block = ROOT_BLOCK;
+    root_dir[0].file_size = 0;
+    root_dir[0].create_time = time(NULL);
+    
+    // 添加 ".." 条目 (根目录的父目录是自身)
+    strcpy(root_dir[1].filename, "..");
+    root_dir[1].attr.is_dir = 1;
+    root_dir[1].attr.read = 1;
+    root_dir[1].attr.write = 1;
+    root_dir[1].first_block = ROOT_BLOCK; // 根目录的父目录仍是自己
+    root_dir[1].file_size = 0;
+    root_dir[1].create_time = time(NULL);
 
     // 设置当前目录为根目录
     strcpy(current_dir, "/");
@@ -170,7 +188,26 @@ int my_mkdir(const char* dirname) {
     }
 
     // 初始化新目录块
-    memset(virtual_disk + new_block * BLOCK_SIZE, 0, BLOCK_SIZE);
+    DirEntry* new_dir_entries = (DirEntry*)(virtual_disk + new_block * BLOCK_SIZE);
+    memset(new_dir_entries, 0, BLOCK_SIZE);
+    
+    // 添加 "." 条目 (指向自身)
+    strcpy(new_dir_entries[0].filename, ".");
+    new_dir_entries[0].attr.is_dir = 1;
+    new_dir_entries[0].attr.read = 1;
+    new_dir_entries[0].attr.write = 1; 
+    new_dir_entries[0].first_block = new_block;
+    new_dir_entries[0].file_size = 0;
+    new_dir_entries[0].create_time = time(NULL);
+    
+    // 添加 ".." 条目 (指向父目录)
+    strcpy(new_dir_entries[1].filename, "..");
+    new_dir_entries[1].attr.is_dir = 1;
+    new_dir_entries[1].attr.read = 1;
+    new_dir_entries[1].attr.write = 1;
+    new_dir_entries[1].first_block = current_dir_block; // 指向父目录
+    new_dir_entries[1].file_size = 0;
+    new_dir_entries[1].create_time = time(NULL);
 
     // 在当前目录中创建新条目
     strcpy(current_dir_entries[empty_entry].filename, dirname);
@@ -257,78 +294,131 @@ void my_ls() {
 
 // 切换目录
 int my_cd(const char* dirname) {
-    // 处理特殊情况
-    if (strcmp(dirname, ".") == 0) {
-        // 保持在当前目录
-        return 0;
+    // 处理空目录名
+    if (dirname == NULL || dirname[0] == '\0') {
+        printf("用法: cd <目录名>\n");
+        return -1;
     }
-
-    if (strcmp(dirname, "..") == 0) {
-        // 返回上级目录
-        if (strcmp(current_dir, "/") == 0) {
-            // 已经在根目录
+    
+    // 创建临时变量来存储结果，只有在成功时才更新当前目录
+    char temp_dir[MAX_PATH_LENGTH];
+    unsigned short temp_dir_block;
+    
+    // 处理绝对路径，从根目录开始
+    if (dirname[0] == '/') {
+        strcpy(temp_dir, "/");
+        temp_dir_block = ROOT_BLOCK;
+        
+        // 如果只是根目录"/"，直接返回成功
+        if (dirname[1] == '\0') {
+            strcpy(current_dir, temp_dir);
+            current_dir_block = temp_dir_block;
             return 0;
         }
-
-        // 查找最后一个"/"的位置
-        char* last_slash = strrchr(current_dir, '/');
-        if (last_slash == current_dir) {
-            // 根目录的情况
-            current_dir[1] = '\0';
-            current_dir_block = ROOT_BLOCK;
-        } else {
-            *last_slash = '\0';
-
-            // 查找新的当前目录对应的块
-            char* dir_name = last_slash + 1;
-            if (dir_name[0] == '\0') {
-                // 处理路径结尾的/
-                last_slash = strrchr(current_dir, '/');
-                if (last_slash == current_dir) {
-                    current_dir[1] = '\0';
-                    current_dir_block = ROOT_BLOCK;
-                } else {
-                    *last_slash = '\0';
-                    dir_name = last_slash + 1;
-
-                    // 查找上级目录
-                    // 这里实际实现需要更完善，暂时简化处理
-                    current_dir_block = ROOT_BLOCK;
+        
+        // 处理剩余路径部分
+        dirname++;  // 跳过开头的'/'
+    } else {
+        // 相对路径，复制当前目录作为起点
+        strcpy(temp_dir, current_dir);
+        temp_dir_block = current_dir_block;
+    }
+    
+    // 分割路径并逐级处理
+    char path_copy[MAX_PATH_LENGTH];
+    strcpy(path_copy, dirname);
+    
+    char* token;
+    char* rest = path_copy;
+    char delim[] = "/";
+    
+    while ((token = strtok_r(rest, delim, &rest))) {
+        // 处理"."（当前目录）
+        if (strcmp(token, ".") == 0) {
+            continue;  // 不做任何操作
+        }
+        
+        // 处理".."（父目录）
+        else if (strcmp(token, "..") == 0) {
+            // 如果已经在根目录，就保持不变
+            if (strcmp(temp_dir, "/") == 0) {
+                continue;
+            }
+            
+            // 找到当前目录中的 ".." 目录项
+            DirEntry* entries = (DirEntry*)(virtual_disk + temp_dir_block * BLOCK_SIZE);
+            int found = 0;
+            
+            for (int i = 0; i < BLOCK_SIZE / sizeof(DirEntry); i++) {
+                if (entries[i].filename[0] != '\0' && 
+                    entries[i].attr.is_dir && 
+                    strcmp(entries[i].filename, "..") == 0) {
+                    // 直接使用 ".." 条目中存储的父目录块号
+                    temp_dir_block = entries[i].first_block;
+                    found = 1;
+                    break;
+                }
+            }
+            
+            // 如果没有找到 ".." 条目（可能是根目录或文件系统损坏）
+            if (!found) {
+                if (temp_dir_block != ROOT_BLOCK) {
+                    printf("警告：目录结构损坏，无法找到父目录\n");
+                    return -1;
+                }
+                continue;  // 在根目录，保持不变
+            }
+            
+            // 更新路径字符串 - 截断到最后一个 '/'
+            char* last_slash = strrchr(temp_dir, '/');
+            if (last_slash == temp_dir) {
+                // 返回根目录
+                temp_dir[1] = '\0';
+            } else {
+                *last_slash = '\0';
+                // 如果截断后为空，则设为根目录
+                if (temp_dir[0] == '\0') {
+                    strcpy(temp_dir, "/");
                 }
             }
         }
-
-        return 0;
+        
+        // 处理常规目录
+        else {
+            DirEntry entry;
+            int found = 0;
+            DirEntry* entries = (DirEntry*)(virtual_disk + temp_dir_block * BLOCK_SIZE);
+            
+            for (int i = 0; i < BLOCK_SIZE / sizeof(DirEntry); i++) {
+                if (entries[i].filename[0] != '\0' && 
+                    entries[i].attr.is_dir && 
+                    strcmp(entries[i].filename, token) == 0) {
+                    entry = entries[i];
+                    found = 1;
+                    break;
+                }
+            }
+            
+            if (!found) {
+                printf("目录 %s 不存在！\n", token);
+                return -1;
+            }
+            
+            // 更新临时目录块
+            temp_dir_block = entry.first_block;
+            
+            // 更新临时目录路径
+            if (strcmp(temp_dir, "/") != 0) {
+                strcat(temp_dir, "/");
+            }
+            strcat(temp_dir, token);
+        }
     }
-
-    if (strcmp(dirname, "/") == 0) {
-        // 切换到根目录
-        strcpy(current_dir, "/");
-        current_dir_block = ROOT_BLOCK;
-        return 0;
-    }
-
-    // 查找目录
-    DirEntry entry;
-    int entry_index = find_file_or_dir(dirname, &entry);
-    if (entry_index == -1) {
-        printf("目录 %s 不存在！\n", dirname);
-        return -1;
-    }
-
-    // 确保是目录
-    if (!entry.attr.is_dir) {
-        printf("%s 不是目录！\n", dirname);
-        return -1;
-    }
-
-    // 更新当前目录
-    if (strcmp(current_dir, "/") != 0) {
-        strcat(current_dir, "/");
-    }
-    strcat(current_dir, dirname);
-    current_dir_block = entry.first_block;
-
+    
+    // 所有路径处理成功，更新实际的当前目录
+    strcpy(current_dir, temp_dir);
+    current_dir_block = temp_dir_block;
+    
     return 0;
 }
 
